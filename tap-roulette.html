@@ -188,8 +188,8 @@ main{max-width:620px;width:100%;margin:0 auto;padding:10px 14px 14px;flex:1;min-
 .spot-msg{font-weight:800;font-size:13px;text-align:center;margin:0;color:#111;min-height:18px;font-family:"Baloo 2",cursive}
 /* Spot the Difference */
 .diff-wrap{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px}
-.diff-panels{flex:1;min-height:0;display:flex;gap:10px}
-.diff-panel{flex:1;min-width:0;position:relative;border:3.5px solid #111;border-radius:14px;overflow:hidden;box-shadow:0 4px 0 var(--line);cursor:pointer;background:#B3E5FC}
+.diff-panels{flex:1;min-height:0;display:flex;gap:10px;align-items:center}
+.diff-panel{flex:1;min-width:0;aspect-ratio:4/5;max-height:100%;position:relative;border:3.5px solid #111;border-radius:14px;overflow:hidden;box-shadow:0 4px 0 var(--line);cursor:pointer;background:#B3E5FC}
 .diff-panel svg{position:absolute;inset:0;width:100%;height:100%;display:block}
 .diff-panel.miss{animation:diffShake .3s ease}
 @keyframes diffShake{0%,100%{transform:translateX(0)}25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
@@ -926,7 +926,7 @@ function mountSpotDiff(){
   var s=$('stage');
   var VW=200, VH=250;
   function svgWrap(inner){
-    return '<svg viewBox="0 0 '+VW+' '+VH+'" preserveAspectRatio="none" aria-hidden="true">'+inner+'</svg>';
+    return '<svg viewBox="0 0 '+VW+' '+VH+'" preserveAspectRatio="xMidYMid meet" aria-hidden="true">'+inner+'</svg>';
   }
   /* Each scene draws itself twice: draw(false) = left picture, draw(true) = right picture.
      diffs[] lists the tap spot (viewBox coords) + tap radius for each of the 5 differences. */
@@ -1097,7 +1097,7 @@ function mountSpotDiff(){
       g+='<circle cx="'+d.x+'" cy="'+d.y+'" r="'+(d.r-3)+'" fill="rgba(0,200,83,0.18)" stroke="#00C853" stroke-width="4.5"/>';
       g+='<circle cx="'+d.x+'" cy="'+d.y+'" r="'+(d.r-3)+'" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-dasharray="4 4"/>';
     });
-    return g?('<svg viewBox="0 0 '+VW+' '+VH+'" preserveAspectRatio="none" aria-hidden="true">'+g+'</svg>'):'';
+    return g?('<svg viewBox="0 0 '+VW+' '+VH+'" preserveAspectRatio="xMidYMid meet" aria-hidden="true">'+g+'</svg>'):'';
   }
   function draw(){
     if(!panelL||!panelR) return;
@@ -1116,8 +1116,10 @@ function mountSpotDiff(){
   function tapOn(panel,e){
     if(!playing||!scene) return;
     var rect=panel.getBoundingClientRect();
-    var x=(e.clientX-rect.left)/rect.width*VW;
-    var y=(e.clientY-rect.top)/rect.height*VH;
+    var scale=Math.min(rect.width/VW,rect.height/VH);
+    var ox=(rect.width-VW*scale)/2, oy=(rect.height-VH*scale)/2;
+    var x=(e.clientX-rect.left-ox)/scale;
+    var y=(e.clientY-rect.top-oy)/scale;
     for(var i=0;i<scene.diffs.length;i++){
       if(found.indexOf(i)>=0) continue;
       var d=scene.diffs[i];
