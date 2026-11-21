@@ -1,0 +1,17 @@
+name: Rename tap-roulette.html to index.html
+on:
+  workflow_dispatch:
+jobs:
+  rename:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rename tap-roulette.html to index.html
+        run: |
+          git mv tap-roulette.html index.html
+          git config user.name "dawudjunaid7860-dot"
+          git config user.email "dawudjunaid7860-dot@users.noreply.github.com"
+          git commit -m "Rename tap-roulette.html to index.html"
+          git push
