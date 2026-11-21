@@ -177,7 +177,9 @@ main{max-width:620px;width:100%;margin:0 auto;padding:10px 14px 14px;flex:1;min-
 .ttt-cell svg{width:47px;height:47px;display:block}
 /* Racing Rush */
 .race-wrap{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px}
-.race-frame{flex:1;min-height:0;width:100%;display:flex;align-items:flex-start;justify-content:center}
+.race-frame{flex:1;min-height:0;width:100%;display:flex;align-items:center;justify-content:center}
+.race-hud{gap:6px;margin-bottom:2px}
+.race-hud div{font-size:11px;padding:5px 4px;white-space:nowrap;border-radius:10px;box-shadow:0 2px 0 var(--line);letter-spacing:-.02em}
 .race-canvas{flex:none;width:auto;height:auto;max-width:100%;border:3.5px solid #111;border-radius:18px;box-shadow:0 5px 0 var(--line);touch-action:none;display:block;background:#3E9B4F}
 .race-msg{font-family:"Baloo 2",cursive;font-weight:800;font-size:14px;text-align:center;margin:0;color:#111;letter-spacing:.01em}
 .race-wrap .race-msg{min-height:20px}
@@ -363,6 +365,7 @@ document.addEventListener('keydown',function(e){ if(e.key==='Escape') closeSheet
 
 function startRoulette(){
   if(rouletteTimer) clearInterval(rouletteTimer);
+  var tw0=$('timerWrap'); if(tw0) tw0.style.display='';
   rouletteLeft=GAME_LEN; updateCount();
   rouletteTimer=setInterval(function(){ rouletteLeft-=0.25; if(rouletteLeft<0) rouletteLeft=0; updateCount(); if(rouletteLeft<=0){ spinRandom(); } },250);
 }
@@ -373,6 +376,14 @@ function updateCount(){
   if(cd) cd.textContent=m+':'+String(s).padStart(2,'0');
   if(fl) fl.style.width=(rouletteLeft/GAME_LEN*100)+'%';
   if(tw) tw.classList.toggle('low', total<=10);
+}
+/* Racing Rush is exempt from the 60-second roulette: a level can take
+   longer than a minute, so while a race is on, the countdown is stopped
+   and hidden. It only starts again once the race is fully over
+   (champion finish) or when a different game is loaded. */
+function pauseRoulette(){
+  if(rouletteTimer){ clearInterval(rouletteTimer); rouletteTimer=null; }
+  var tw=$('timerWrap'); if(tw) tw.style.display='none';
 }
 function spinRandom(){
   var pool=GAMES.filter(function(g){ return !current||g.id!==current.id; });
@@ -391,7 +402,7 @@ function loadGame(id){
   if(cardEl){ cardEl.style.background=BGS[game.id]||'#FFFFFF'; cardEl.style.color='#111111'; }
   setScore('');
   recordStart(game);
-  startRoulette();
+  if(game.id==='racing'){ pauseRoulette(); } else { startRoulette(); }
   ({reaction:mountReaction,color:mountColor,frenzy:mountFrenzy,memory:mountMemory,math:mountMath,odd:mountOdd,timing:mountTiming,emoji:mountEmoji,wordle:mountWordle,wordsearch:mountWordSearch,memmatch:mountMemMatch,tictac:mountTicTac,racing:mountRacing,spotmatch:mountSpotMatch,spotdiff:mountSpotDiff}[game.id])();
 }
 
@@ -765,18 +776,20 @@ function mountTicTac(){
 /* ---------- RACING RUSH — 3 levels, you vs the AI, first to 3 laps wins each level (Kenney top-down style) ---------- */
 function mountRacing(){
   var s=$('stage');
-  /* Logical view size — the canvas ALWAYS renders at this 4:5 portrait aspect.
-     The bitmap is 2x for crispness and the on-screen size is fitted with a
-     single uniform scale (see fitCanvas), so the track can never be squished
-     or stretched: circles stay circles on any phone. */
-  var VIEW_W=360, VIEW_H=450, DPR=Math.min(2, window.devicePixelRatio||1);
+  /* Logical view size — a tall 2:3 portrait view that matches how a phone
+     actually holds the race, so the play area fills far more of the screen
+     than the old small 4:5 box did. The bitmap is 2x for crispness and the
+     on-screen size is fitted with a single uniform scale (see fitCanvas),
+     so the track can never be squished or stretched: circles stay circles
+     on any phone, the oval just renders bigger. */
+  var VIEW_W=360, VIEW_H=540, DPR=Math.min(2, window.devicePixelRatio||1);
   var LAPS_TO_WIN=3;
 
   /* Level table — every level: both cars faster, track bigger, AI tougher.
      Level 1 = the original oval. Levels 2-3 are longer circuits with more
      turns, drawn bigger than the screen — the camera follows your car. */
   var LEVELS=[
-    { worldW:360, worldH:430, half:26, playerMax:1.85, aiMax:1.34,
+    { worldW:360, worldH:520, half:26, playerMax:1.85, aiMax:1.34,
       aiSteer:2.4, aiCornerCut:0.55, aiCornerSlow:0.70, aiBand:55, aiBandUp:0.10, aiBandDown:0.06, fit:true,  pts:null },
     { worldW:520, worldH:640, half:30, playerMax:2.60, aiMax:2.02,
       aiSteer:2.8, aiCornerCut:0.50, aiCornerSlow:0.78, aiBand:40, aiBandUp:0.07, aiBandDown:0.04, fit:false,
@@ -789,7 +802,7 @@ function mountRacing(){
   var level=1, cfg=LEVELS[0];
   var WP=[], N=0, HALF=26;
   var player=null, ai=null;
-  var state='count', countT=0, raceFrames=0, endByTime=false, lastPlayerLap=1, flashMsg='', flashT=0, transT=0;
+  var state='count', countT=0, raceFrames=0, lastPlayerLap=1, flashMsg='', flashT=0, transT=0;
   var camX=0, camY=0;
   var keys={left:false,right:false,gas:false,brake:false};
   var speckles=[], trees=[], bushes=[], tents=[], crowd=[];
@@ -811,8 +824,10 @@ function mountRacing(){
         }
       }
     } else {
-      /* Level 1: the original rounded-rectangle oval */
-      var L=84,R=276,T=88,B=342,CR=60;
+      /* Level 1: rounded-rectangle oval, stretched taller (longer straights)
+         to fill the taller portrait view — drawn with the same uniform
+         scale as everything else, so it is bigger, never stretched. */
+      var L=78,R=282,T=78,B=442,CR=64;
       function line(x0,y0,x1,y1,n){ for(var i=0;i<n;i++) WP.push({x:x0+(x1-x0)*i/n, y:y0+(y1-y0)*i/n}); }
       function arc(cx,cy,a0,a1,n){ for(var i=0;i<n;i++){ var a=a0+(a1-a0)*i/n; WP.push({x:cx+Math.cos(a)*CR, y:cy+Math.sin(a)*CR}); } }
       line(L+CR,T,R-CR,T,16);
@@ -856,9 +871,9 @@ function mountRacing(){
     for(var i=0;i<nSp;i++) speckles.push({x:8+rnd()*(cfg.worldW-16), y:8+rnd()*(cfg.worldH-16), l:3+rnd()*4, a:0.08+rnd()*0.12});
     if(level===1){
       crowd=[]; for(var ci=0;ci<44;ci++) crowd.push({x:118+(ci%22)*5.6, y:14+Math.floor(ci/22)*9, c:['#FF5252','#FFD740','#29B6F6','#FFFFFF','#FF9800','#AB47BC'][ci%6]});
-      trees=[{x:26,y:44},{x:334,y:44},{x:26,y:392},{x:334,y:392},{x:180,y:52},{x:150,y:262},{x:238,y:150}];
-      bushes=[{x:44,y:215},{x:316,y:215},{x:196,y:296},{x:150,y:170}];
-      tents=[{x:178,y:196,c:'#FF6D00'},{x:222,y:238,c:'#29B6F6'}];
+      trees=[{x:26,y:44},{x:334,y:44},{x:26,y:478},{x:334,y:478},{x:150,y:330},{x:238,y:190}];
+      bushes=[{x:30,y:260},{x:330,y:260},{x:196,y:356},{x:150,y:205}];
+      tents=[{x:178,y:246,c:'#FF6D00'},{x:222,y:292,c:'#29B6F6'}];
     } else {
       var tries=0;
       while(trees.length<16 && tries<600){ tries++; var tx=24+rnd()*(cfg.worldW-48), ty=24+rnd()*(cfg.worldH-48); if(distToTrack(tx,ty)>HALF+30) trees.push({x:tx,y:ty}); }
@@ -876,7 +891,7 @@ function mountRacing(){
     var startIdx=N-4;
     player=makeCar(startIdx,-(HALF*0.45),'#FF6D00',true);
     ai=makeCar(startIdx,(HALF*0.45),'#2979FF',false);
-    state='count'; countT=0; raceFrames=0; endByTime=false; lastPlayerLap=1; flashT=0; transT=0;
+    state='count'; countT=0; raceFrames=0; lastPlayerLap=1; flashT=0; transT=0;
     camX=player.x; camY=player.y;
     keys.left=keys.right=keys.gas=keys.brake=false;
     var lvEl=$('rcLevel'); if(lvEl) lvEl.textContent=level;
@@ -888,7 +903,7 @@ function mountRacing(){
     draw();
   }
 
-  s.innerHTML='<div class="hud"><div>LEVEL <span id="rcLevel">1</span>/3</div><div>YOU LAP <span id="rcLap">1</span>/'+LAPS_TO_WIN+'</div><div>POS <span id="rcPos">—</span></div><div>AI LAP <span id="rcAiLap">1</span>/'+LAPS_TO_WIN+'</div></div>'
+  s.innerHTML='<div class="hud race-hud"><div>LEVEL <span id="rcLevel">1</span>/3</div><div>YOU LAP <span id="rcLap">1</span></div><div>POS <span id="rcPos">—</span></div><div>AI LAP <span id="rcAiLap">1</span></div></div>'
     +'<div class="race-wrap"><div class="race-frame"><canvas class="race-canvas no-spin" id="rcCv" width="'+(VIEW_W*DPR)+'" height="'+(VIEW_H*DPR)+'"></canvas></div>'
     +'<p class="race-msg" id="rcMsg">Get ready…</p>'
     +'<div class="race-controls no-spin">'
@@ -897,24 +912,34 @@ function mountRacing(){
     +'</div></div>';
   var cv=$('rcCv'), ctx=cv.getContext('2d');
 
-  /* --- THE SQUISH FIX ---
-     Size the canvas with ONE uniform scale: fit the 360x450 view inside
-     whatever box the phone gives us, centered, never stretched per-axis. */
+  /* --- THE SQUISH FIX, BIGGER ---
+     Size the canvas with ONE uniform scale: fit the 360x540 view inside
+     the race frame, centered, never stretched per-axis. The frame is
+     flex:1, so it IS exactly the leftover space between the HUD above
+     and the message + touch controls below — measuring it directly
+     (instead of guessing an overhead) makes the race use every pixel
+     of that space, and hiding the Next Game timer during a race gives
+     it even more height. The canvas never overlaps the HUD or controls. */
   function fitCanvas(){
-    var wrap=cv.parentElement && cv.parentElement.parentElement;
     var frame=cv.parentElement;
-    if(!wrap||!frame) return;
-    var availW=frame.clientWidth||wrap.clientWidth||VIEW_W;
-    var availH=wrap.clientHeight-118; /* message line + control buttons + gaps */
-    if(availH<200) availH=200;
+    if(!frame) return;
+    var availW=frame.clientWidth, availH=frame.clientHeight;
+    if(!availW||!availH){
+      var wrap=frame.parentElement;
+      availW=(wrap&&wrap.clientWidth)||VIEW_W;
+      availH=((wrap&&wrap.clientHeight)||VIEW_H+118)-118;
+      if(availH<200) availH=200;
+    }
     var scale=Math.min(availW/VIEW_W, availH/VIEW_H);
     if(!(scale>0)) scale=1;
     cv.style.width=Math.floor(VIEW_W*scale)+'px';
     cv.style.height=Math.floor(VIEW_H*scale)+'px';
   }
-  function onResize(){ fitCanvas(); }
+  function onResize(){
+    if(!document.body.contains(cv)){ window.removeEventListener('resize',onResize); return; }
+    fitCanvas();
+  }
   window.addEventListener('resize',onResize);
-  later(function(){ window.removeEventListener('resize',onResize); }, GAME_LEN*1000+6000);
 
   function bindHold(id,key){
     var el=$(id); if(!el) return;
@@ -935,6 +960,7 @@ function mountRacing(){
     else if(e.key==='ArrowDown') keys.brake=true;
   }
   function onKeyUp(e){
+    if(!document.body.contains(cv)){ document.removeEventListener('keydown',onKey); document.removeEventListener('keyup',onKeyUp); return; }
     if(e.key==='ArrowLeft') keys.left=false;
     else if(e.key==='ArrowRight') keys.right=false;
     else if(e.key==='ArrowUp') keys.gas=false;
@@ -942,7 +968,9 @@ function mountRacing(){
   }
   document.addEventListener('keydown',onKey);
   document.addEventListener('keyup',onKeyUp);
-  later(function(){ document.removeEventListener('keydown',onKey); document.removeEventListener('keyup',onKeyUp); }, GAME_LEN*1000+4000);
+  /* No timed removal of the listeners: a race can run well past a
+     minute now, so the controls must stay live for the whole race.
+     They clean themselves up once the canvas leaves the page. */
 
   function trackPath(){
     ctx.beginPath();
@@ -1058,7 +1086,7 @@ function mountRacing(){
     /* center dashes */
     trackPath(); ctx.strokeStyle='rgba(255,255,255,0.55)'; ctx.lineWidth=2.6; ctx.setLineDash([16,22]); ctx.stroke(); ctx.setLineDash([]);
     if(level===1){
-      ctx.save(); ctx.translate(276+2,215); ctx.rotate(Math.PI/2);
+      ctx.save(); ctx.translate(282+2,260); ctx.rotate(Math.PI/2);
       ctx.fillStyle='rgba(255,255,255,0.65)'; ctx.font='800 13px Archivo,sans-serif'; ctx.textAlign='center'; ctx.fillText('P I T',0,5); ctx.restore();
     }
     /* start / finish checkers across the track at waypoint 0 */
@@ -1094,10 +1122,10 @@ function mountRacing(){
       banner('LEVEL '+level+' CLEAR! 🏆', 'Level '+(level+1)+' next — bigger track, faster cars!', '#69F0AE');
     }
     if(state==='retry'){
-      banner('AI WINS LEVEL '+level, endByTime?'Time! The AI was ahead — retry Level '+level+'.':'Retry Level '+level+' — you\'ve got this!', '#FF8A65');
+      banner('AI WINS LEVEL '+level, 'Retry Level '+level+' — you\'ve got this!', '#FF8A65');
     }
     if(state==='done'){
-      banner('🏆 CHAMPION!', endByTime?'Time! You were ahead on Level 3 — you beat all 3 levels!':'You beat all 3 levels — racing champion!', '#69F0AE');
+      banner('🏆 CHAMPION!', 'You beat all 3 levels — racing champion!', '#69F0AE');
     }
   }
   function updateProg(c){
@@ -1109,9 +1137,10 @@ function mountRacing(){
     c.lap=Math.max(1,Math.min(LAPS_TO_WIN,lap));
   }
   function relProg(c){ return c.prog-c.base; }
-  function finish(winnerId,byTime){
+  /* A level ends ONLY here, and this is only ever called when a car has
+     actually completed 3 laps. There is no clock in Racing Rush. */
+  function finish(winnerId){
     if(state==='done'||state==='clear'||state==='retry') return;
-    endByTime=!!byTime;
     var m=$('rcMsg');
     if(winnerId==='player' && level<3){
       state='clear'; transT=0; pop(980);
@@ -1121,6 +1150,9 @@ function mountRacing(){
       state='done'; pop(980);
       if(m) m.textContent='🏆 You beat all 3 levels! Swipe up or pick Games to race again.';
       recordScore('Racing — beat ALL 3 levels! 🏆'); setScore('🏆 Racing champion!');
+      /* The race is fully over — the 60-second roulette countdown
+         starts again from here. */
+      startRoulette();
     } else {
       state='retry'; transT=0; pop(180);
       if(m) m.textContent='The AI took Level '+level+' — retrying Level '+level+'…';
@@ -1211,17 +1243,14 @@ function mountRacing(){
     var ea=$('rcAiLap'); if(ea) ea.textContent=ai.lap;
     var ep=$('rcPos'); if(ep) ep.textContent=relProg(player)>=relProg(ai)?'1st':'2nd';
     setScore('Level '+level+' • Lap '+player.lap+'/'+LAPS_TO_WIN+' • '+(relProg(player)>=relProg(ai)?'1st':'2nd'));
-    /* win check */
-    if(relProg(player)>=N*LAPS_TO_WIN) finish('player',false);
-    else if(relProg(ai)>=N*LAPS_TO_WIN) finish('ai',false);
+    /* win check — laps only, never time */
+    if(relProg(player)>=N*LAPS_TO_WIN) finish('player');
+    else if(relProg(ai)>=N*LAPS_TO_WIN) finish('ai');
     draw();
   }
-  /* If the 60-second roulette clock runs out mid-level, whoever is ahead
-     on progress wins that level. */
-  later(function(){ if(state==='go'||state==='count') finish(relProg(player)>=relProg(ai)?'player':'ai', true); }, 57200);
   startLevel(1);
   fitCanvas();
-  later(fitCanvas,60); later(fitCanvas,300);
+  later(fitCanvas,60); later(fitCanvas,300); later(fitCanvas,800);
   every(step,16);
 }
 
