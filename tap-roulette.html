@@ -177,8 +177,10 @@ main{max-width:620px;width:100%;margin:0 auto;padding:10px 14px 14px;flex:1;min-
 .ttt-cell svg{width:47px;height:47px;display:block}
 /* Racing Rush */
 .race-wrap{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px}
-.race-canvas{flex:1;min-height:0;width:100%;border:3.5px solid #111;border-radius:18px;box-shadow:0 5px 0 var(--line);touch-action:none;display:block;background:#3E9B4F}
+.race-frame{flex:1;min-height:0;width:100%;display:flex;align-items:flex-start;justify-content:center}
+.race-canvas{flex:none;width:auto;height:auto;max-width:100%;border:3.5px solid #111;border-radius:18px;box-shadow:0 5px 0 var(--line);touch-action:none;display:block;background:#3E9B4F}
 .race-msg{font-family:"Baloo 2",cursive;font-weight:800;font-size:14px;text-align:center;margin:0;color:#111;letter-spacing:.01em}
+.race-wrap .race-msg{min-height:20px}
 .race-controls{display:flex;justify-content:space-between;gap:10px;touch-action:none}
 .rc-group{display:flex;gap:8px}
 .rc-btn{border:3px solid #111;border-radius:14px;background:#fff;color:#111;font-family:"Baloo 2",cursive;font-weight:800;font-size:19px;min-width:62px;height:54px;min-height:54px;padding:0 14px;box-shadow:0 4px 0 var(--line);user-select:none;-webkit-user-select:none;touch-action:none}
@@ -315,7 +317,7 @@ var GAMES=[
  {id:'wordsearch',name:'Word Search',color:'#00897B',icon:'🔤',how:'Find the hidden words in the letter grid. Tap the letters of a word in order — across or down — to mark it found.'},
  {id:'memmatch',name:'Memory Match',color:'#5E35B1',icon:'🃏',how:'Flip two cards at a time and find all 8 matching animal pairs. Remember where they are!'},
  {id:'tictac',name:'Tic Tac Toe',color:'#A9716B',icon:'✖️',how:'You are the red X, the computer is the blue O. Tap a square to play — get 3 in a row to win!'},
- {id:'racing',name:'Racing Rush',color:'#FF6D00',icon:'🏎️',how:'Race the blue AI car — first to finish 3 laps wins! Hold GAS to speed up, steer with the ◀ ▶ buttons, BRAKE for tight corners. Grass slows you down, so stay on the track!'},
+ {id:'racing',name:'Racing Rush',color:'#FF6D00',icon:'🏎️',how:'Race the blue AI car over 3 levels — first to finish 3 laps wins the level! Win and the next level unlocks: bigger track, faster cars (yours AND the AI\'s), tougher AI. Lose and you retry the same level. Hold GAS to speed up, steer with the ◀ ▶ buttons, BRAKE for tight corners. Grass slows you down, so stay on the track!'},
  {id:'spotmatch',name:'Spot the Match',color:'#29B6F6',icon:'🔍',how:'Two round cards full of symbols — exactly ONE symbol is on both cards. Find it and tap it, fast!'},
  {id:'spotdiff',name:'Spot the Difference',color:'#FF7043',icon:'🔎',how:'Two pictures side by side that look almost the same — but 5 things are different! Tap each difference you find, on either picture. Find all 5 to move to the next scene. 60 seconds.'}
 ];
@@ -760,28 +762,70 @@ function mountTicTac(){
   newRound();
 }
 
-/* ---------- RACING RUSH — you vs the AI, first to 3 laps wins (Kenney top-down style) ---------- */
+/* ---------- RACING RUSH — 3 levels, you vs the AI, first to 3 laps wins each level (Kenney top-down style) ---------- */
 function mountRacing(){
   var s=$('stage');
-  var W=360,H=430;
+  /* Logical view size — the canvas ALWAYS renders at this 4:5 portrait aspect.
+     The bitmap is 2x for crispness and the on-screen size is fitted with a
+     single uniform scale (see fitCanvas), so the track can never be squished
+     or stretched: circles stay circles on any phone. */
+  var VIEW_W=360, VIEW_H=450, DPR=Math.min(2, window.devicePixelRatio||1);
   var LAPS_TO_WIN=3;
-  /* Track centerline: rounded-rectangle loop, sampled into waypoints (clockwise) */
-  var L=84,R=276,T=88,B=342,CR=60;
-  var WP=[];
-  (function(){
-    function line(x0,y0,x1,y1,n){ for(var i=0;i<n;i++) WP.push({x:x0+(x1-x0)*i/n, y:y0+(y1-y0)*i/n}); }
-    function arc(cx,cy,a0,a1,n){ for(var i=0;i<n;i++){ var a=a0+(a1-a0)*i/n; WP.push({x:cx+Math.cos(a)*CR, y:cy+Math.sin(a)*CR}); } }
-    line(L+CR,T,R-CR,T,16);            /* top straight, heading right */
-    arc(R-CR,T+CR,-Math.PI/2,0,14);    /* top-right corner */
-    line(R,T+CR,R,B-CR,22);            /* right straight, heading down */
-    arc(R-CR,B-CR,0,Math.PI/2,14);     /* bottom-right corner */
-    line(R-CR,B,L+CR,B,16);            /* bottom straight, heading left */
-    arc(L+CR,B-CR,Math.PI/2,Math.PI,14);/* bottom-left corner */
-    line(L,B-CR,L,T+CR,22);            /* left straight, heading up */
-    arc(L+CR,T+CR,Math.PI,Math.PI*1.5,14);/* top-left corner */
-  })();
-  var N=WP.length;
-  var HALF=26; /* half track width */
+
+  /* Level table — every level: both cars faster, track bigger, AI tougher.
+     Level 1 = the original oval. Levels 2-3 are longer circuits with more
+     turns, drawn bigger than the screen — the camera follows your car. */
+  var LEVELS=[
+    { worldW:360, worldH:430, half:26, playerMax:1.85, aiMax:1.34,
+      aiSteer:2.4, aiCornerCut:0.55, aiCornerSlow:0.70, aiBand:55, aiBandUp:0.10, aiBandDown:0.06, fit:true,  pts:null },
+    { worldW:520, worldH:640, half:30, playerMax:2.60, aiMax:2.02,
+      aiSteer:2.8, aiCornerCut:0.50, aiCornerSlow:0.78, aiBand:40, aiBandUp:0.07, aiBandDown:0.04, fit:false,
+      pts:[[260,70],[384,84],[452,164],[386,248],[454,338],[398,452],[300,560],[176,548],[84,452],[140,344],[78,232],[140,120]] },
+    { worldW:600, worldH:700, half:32, playerMax:3.30, aiMax:2.68,
+      aiSteer:3.2, aiCornerCut:0.45, aiCornerSlow:0.85, aiBand:28, aiBandUp:0.05, aiBandDown:0.02, fit:false,
+      pts:[[300,70],[430,80],[510,150],[450,230],[520,320],[460,410],[530,500],[440,610],[300,648],[170,618],[90,528],[150,438],[80,338],[150,252],[85,158],[170,85]] }
+  ];
+
+  var level=1, cfg=LEVELS[0];
+  var WP=[], N=0, HALF=26;
+  var player=null, ai=null;
+  var state='count', countT=0, raceFrames=0, endByTime=false, lastPlayerLap=1, flashMsg='', flashT=0, transT=0;
+  var camX=0, camY=0;
+  var keys={left:false,right:false,gas:false,brake:false};
+  var speckles=[], trees=[], bushes=[], tents=[], crowd=[];
+
+  function buildTrack(){
+    WP=[];
+    if(cfg.pts){
+      /* Closed Catmull-Rom spline through the control points — a smooth
+         circuit with real turns, sampled into waypoints. */
+      var pts=cfg.pts, P=pts.length, PER=16;
+      for(var i=0;i<P;i++){
+        var p0=pts[(i-1+P)%P], p1=pts[i], p2=pts[(i+1)%P], p3=pts[(i+2)%P];
+        for(var j=0;j<PER;j++){
+          var t=j/PER, t2=t*t, t3=t2*t;
+          WP.push({
+            x:0.5*((2*p1[0])+(-p0[0]+p2[0])*t+(2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t2+(-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t3),
+            y:0.5*((2*p1[1])+(-p0[1]+p2[1])*t+(2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t2+(-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t3)
+          });
+        }
+      }
+    } else {
+      /* Level 1: the original rounded-rectangle oval */
+      var L=84,R=276,T=88,B=342,CR=60;
+      function line(x0,y0,x1,y1,n){ for(var i=0;i<n;i++) WP.push({x:x0+(x1-x0)*i/n, y:y0+(y1-y0)*i/n}); }
+      function arc(cx,cy,a0,a1,n){ for(var i=0;i<n;i++){ var a=a0+(a1-a0)*i/n; WP.push({x:cx+Math.cos(a)*CR, y:cy+Math.sin(a)*CR}); } }
+      line(L+CR,T,R-CR,T,16);
+      arc(R-CR,T+CR,-Math.PI/2,0,14);
+      line(R,T+CR,R,B-CR,22);
+      arc(R-CR,B-CR,0,Math.PI/2,14);
+      line(R-CR,B,L+CR,B,16);
+      arc(L+CR,B-CR,Math.PI/2,Math.PI,14);
+      line(L,B-CR,L,T+CR,22);
+      arc(L+CR,T+CR,Math.PI,Math.PI*1.5,14);
+    }
+    N=WP.length; HALF=cfg.half;
+  }
   function nearestIdx(x,y,last){
     var best=last,bd=1e9;
     for(var k=-16;k<=16;k++){
@@ -793,30 +837,85 @@ function mountRacing(){
   }
   function globalNearest(x,y){ var best=0,bd=1e9; for(var i=0;i<N;i++){ var dx=WP[i].x-x,dy=WP[i].y-y,d=dx*dx+dy*dy; if(d<bd){bd=d;best=i;} } return best; }
   function distToTrack(x,y){ var i=globalNearest(x,y); return Math.hypot(WP[i].x-x,WP[i].y-y); }
-  function makeCar(x,y,color,isPlayer){
-    var idx=globalNearest(x,y);
-    return {x:x,y:y,a:Math.PI,sp:0,color:color,isPlayer:isPlayer,idx:idx,prog:0,startProg:0,lap:1,finished:false,steerVis:0};
+  function dirAt(idx){
+    var a=WP[((idx-2)%N+N)%N], b=WP[(idx+2)%N];
+    var dx=b.x-a.x, dy=b.y-a.y, m=Math.hypot(dx,dy)||1;
+    return {x:dx/m, y:dy/m};
   }
-  var player=makeCar(238,330,'#FF6D00',true);
-  var ai=makeCar(222,354,'#2979FF',false);
-  /* prog is measured relative to each car's own start index */
-  player.startProg=0; ai.startProg=0;
-  var keys={left:false,right:false,gas:false,brake:false};
-  var state='count', countT=0, raceFrames=0, winner=null, endByTime=false, lastPlayerLap=1, flashMsg='', flashT=0;
-  /* deterministic decorations */
-  var seed=7; function rnd(){ seed=(seed*1103515245+12345)%2147483648; return seed/2147483648; }
-  var speckles=[]; for(var si=0;si<150;si++) speckles.push({x:8+rnd()*(W-16),y:8+rnd()*(H-16),l:3+rnd()*4,a:0.08+rnd()*0.12});
-  var crowd=[]; for(var ci=0;ci<44;ci++) crowd.push({x:118+(ci%22)*5.6, y:14+Math.floor(ci/22)*9, c:['#FF5252','#FFD740','#29B6F6','#FFFFFF','#FF9800','#AB47BC'][ci%6]});
-  var trees=[{x:26,y:44},{x:334,y:44},{x:26,y:392},{x:334,y:392},{x:180,y:52},{x:150,y:262},{x:238,y:150}];
-  var bushes=[{x:44,y:215},{x:316,y:215},{x:196,y:296},{x:150,y:170}];
-  s.innerHTML='<div class="hud"><div>YOU LAP <span id="rcLap">1</span>/'+LAPS_TO_WIN+'</div><div>POS <span id="rcPos">—</span></div><div>AI LAP <span id="rcAiLap">1</span>/'+LAPS_TO_WIN+'</div></div>'
-    +'<div class="race-wrap"><canvas class="race-canvas no-spin" id="rcCv" width="'+W+'" height="'+H+'"></canvas>'
-    +'<p class="race-msg" id="rcMsg">Get ready… first to '+LAPS_TO_WIN+' laps wins!</p>'
+  function makeCar(idx,laneOff,color,isPlayer){
+    var p=WP[idx], d=dirAt(idx);
+    var px=-d.y, py=d.x;
+    return { x:p.x+px*laneOff, y:p.y+py*laneOff, a:Math.atan2(d.y,d.x), sp:0,
+             color:color, isPlayer:isPlayer, idx:idx, prog:idx, base:idx, lap:1, steerVis:0 };
+  }
+  function buildDecor(){
+    var seed=7+level*131;
+    function rnd(){ seed=(seed*1103515245+12345)%2147483648; return seed/2147483648; }
+    speckles=[]; trees=[]; bushes=[]; tents=[]; crowd=[];
+    var nSp=Math.round(cfg.worldW*cfg.worldH/1050);
+    for(var i=0;i<nSp;i++) speckles.push({x:8+rnd()*(cfg.worldW-16), y:8+rnd()*(cfg.worldH-16), l:3+rnd()*4, a:0.08+rnd()*0.12});
+    if(level===1){
+      crowd=[]; for(var ci=0;ci<44;ci++) crowd.push({x:118+(ci%22)*5.6, y:14+Math.floor(ci/22)*9, c:['#FF5252','#FFD740','#29B6F6','#FFFFFF','#FF9800','#AB47BC'][ci%6]});
+      trees=[{x:26,y:44},{x:334,y:44},{x:26,y:392},{x:334,y:392},{x:180,y:52},{x:150,y:262},{x:238,y:150}];
+      bushes=[{x:44,y:215},{x:316,y:215},{x:196,y:296},{x:150,y:170}];
+      tents=[{x:178,y:196,c:'#FF6D00'},{x:222,y:238,c:'#29B6F6'}];
+    } else {
+      var tries=0;
+      while(trees.length<16 && tries<600){ tries++; var tx=24+rnd()*(cfg.worldW-48), ty=24+rnd()*(cfg.worldH-48); if(distToTrack(tx,ty)>HALF+30) trees.push({x:tx,y:ty}); }
+      tries=0;
+      while(bushes.length<12 && tries<600){ tries++; var bx=20+rnd()*(cfg.worldW-40), by=20+rnd()*(cfg.worldH-40); if(distToTrack(bx,by)>HALF+24) bushes.push({x:bx,y:by}); }
+      tries=0;
+      var tentCols=['#FF6D00','#29B6F6','#FF5252'];
+      while(tents.length<3 && tries<600){ tries++; var ex=34+rnd()*(cfg.worldW-68), ey=34+rnd()*(cfg.worldH-68); if(distToTrack(ex,ey)>HALF+44) tents.push({x:ex,y:ey,c:tentCols[tents.length%3]}); }
+    }
+  }
+  function startLevel(lv){
+    if(!document.body.contains(cv)) return;
+    level=lv; cfg=LEVELS[level-1];
+    buildTrack(); buildDecor();
+    var startIdx=N-4;
+    player=makeCar(startIdx,-(HALF*0.45),'#FF6D00',true);
+    ai=makeCar(startIdx,(HALF*0.45),'#2979FF',false);
+    state='count'; countT=0; raceFrames=0; endByTime=false; lastPlayerLap=1; flashT=0; transT=0;
+    camX=player.x; camY=player.y;
+    keys.left=keys.right=keys.gas=keys.brake=false;
+    var lvEl=$('rcLevel'); if(lvEl) lvEl.textContent=level;
+    var el=$('rcLap'); if(el) el.textContent='1';
+    var ea=$('rcAiLap'); if(ea) ea.textContent='1';
+    var ep=$('rcPos'); if(ep) ep.textContent='—';
+    var m=$('rcMsg'); if(m) m.textContent='Level '+level+' of 3 — first to '+LAPS_TO_WIN+' laps wins!';
+    setScore('Level '+level+' • Lap 1/'+LAPS_TO_WIN);
+    draw();
+  }
+
+  s.innerHTML='<div class="hud"><div>LEVEL <span id="rcLevel">1</span>/3</div><div>YOU LAP <span id="rcLap">1</span>/'+LAPS_TO_WIN+'</div><div>POS <span id="rcPos">—</span></div><div>AI LAP <span id="rcAiLap">1</span>/'+LAPS_TO_WIN+'</div></div>'
+    +'<div class="race-wrap"><div class="race-frame"><canvas class="race-canvas no-spin" id="rcCv" width="'+(VIEW_W*DPR)+'" height="'+(VIEW_H*DPR)+'"></canvas></div>'
+    +'<p class="race-msg" id="rcMsg">Get ready…</p>'
     +'<div class="race-controls no-spin">'
     +'<div class="rc-group"><button class="rc-btn" id="rcLeft" aria-label="Steer left">◀</button><button class="rc-btn" id="rcRight" aria-label="Steer right">▶</button></div>'
     +'<div class="rc-group"><button class="rc-btn rc-brake" id="rcBrake">BRAKE</button><button class="rc-btn rc-gas" id="rcGas">GAS</button></div>'
     +'</div></div>';
   var cv=$('rcCv'), ctx=cv.getContext('2d');
+
+  /* --- THE SQUISH FIX ---
+     Size the canvas with ONE uniform scale: fit the 360x450 view inside
+     whatever box the phone gives us, centered, never stretched per-axis. */
+  function fitCanvas(){
+    var wrap=cv.parentElement && cv.parentElement.parentElement;
+    var frame=cv.parentElement;
+    if(!wrap||!frame) return;
+    var availW=frame.clientWidth||wrap.clientWidth||VIEW_W;
+    var availH=wrap.clientHeight-118; /* message line + control buttons + gaps */
+    if(availH<200) availH=200;
+    var scale=Math.min(availW/VIEW_W, availH/VIEW_H);
+    if(!(scale>0)) scale=1;
+    cv.style.width=Math.floor(VIEW_W*scale)+'px';
+    cv.style.height=Math.floor(VIEW_H*scale)+'px';
+  }
+  function onResize(){ fitCanvas(); }
+  window.addEventListener('resize',onResize);
+  later(function(){ window.removeEventListener('resize',onResize); }, GAME_LEN*1000+6000);
+
   function bindHold(id,key){
     var el=$(id); if(!el) return;
     function on(e){ e.preventDefault(); keys[key]=true; el.classList.add('held'); }
@@ -845,9 +944,9 @@ function mountRacing(){
   document.addEventListener('keyup',onKeyUp);
   later(function(){ document.removeEventListener('keydown',onKey); document.removeEventListener('keyup',onKeyUp); }, GAME_LEN*1000+4000);
 
-  function trackPath(offY){
+  function trackPath(){
     ctx.beginPath();
-    for(var i=0;i<N;i++){ var p=WP[i]; if(i===0) ctx.moveTo(p.x,p.y+(offY||0)); else ctx.lineTo(p.x,p.y+(offY||0)); }
+    for(var i=0;i<N;i++){ var p=WP[i]; if(i===0) ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); }
     ctx.closePath();
   }
   function drawTree(x,y){
@@ -870,99 +969,135 @@ function mountRacing(){
   function drawCar(c){
     ctx.save(); ctx.translate(c.x,c.y); ctx.rotate(c.a);
     ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.beginPath(); ctx.ellipse(1.5,3,14,8.5,0,0,7); ctx.fill();
-    /* wheels */
     ctx.fillStyle='#111';
     ctx.fillRect(-10,-10.5,7,4); ctx.fillRect(4,-10.5,7,4); ctx.fillRect(-10,6.5,7,4); ctx.fillRect(4,6.5,7,4);
-    /* body */
     ctx.fillStyle=c.color; ctx.strokeStyle='#111'; ctx.lineWidth=2.2;
     ctx.beginPath(); ctx.roundRect(-14,-8.5,28,17,6); ctx.fill(); ctx.stroke();
-    /* nose stripe */
     ctx.fillStyle='rgba(255,255,255,0.9)'; ctx.fillRect(8,-8.5,3.4,17);
-    /* cockpit + windshield */
     ctx.fillStyle='#263238'; ctx.beginPath(); ctx.roundRect(-5,-6.5,11,13,3.5); ctx.fill();
     ctx.fillStyle='#B3E5FC'; ctx.beginPath(); ctx.roundRect(2.5,-6,4.5,12,2); ctx.fill();
     ctx.fillStyle='#ECEFF1'; ctx.beginPath(); ctx.roundRect(-8.5,-5.5,3.4,11,1.6); ctx.fill();
-    /* roof number dot */
     ctx.fillStyle='#FFFFFF'; ctx.beginPath(); ctx.arc(-2.5,0,3.4,0,7); ctx.fill();
     ctx.fillStyle='#111'; ctx.font='800 6px Archivo,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.fillText(c.isPlayer?'1':'2',-2.5,0.4);
     ctx.restore();
-    if(c.isPlayer && state!=='done'){
+    if(c.isPlayer && state!=='done' && state!=='clear' && state!=='retry'){
       var bob=Math.sin(Date.now()/180)*3;
       ctx.fillStyle='#FFD400'; ctx.strokeStyle='#111'; ctx.lineWidth=1.6;
       var ax=c.x, ay=c.y-24+bob;
       ctx.beginPath(); ctx.moveTo(ax,ay+7); ctx.lineTo(ax-6,ay-3); ctx.lineTo(ax+6,ay-3); ctx.closePath(); ctx.fill(); ctx.stroke();
     }
   }
+  function banner(big,sub,color){
+    ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(0,0,VIEW_W,VIEW_H);
+    var bw=250,bh=26,bx=(VIEW_W-bw)/2,by=118;
+    for(var cy2=0;cy2<2;cy2++) for(var cx2=0;cx2<18;cx2++){ ctx.fillStyle=(cx2+cy2)%2===0?'#111':'#fff'; ctx.fillRect(bx+cx2*(bw/18),by+cy2*(bh/2),bw/18,bh/2); }
+    ctx.strokeStyle='#111'; ctx.lineWidth=3; ctx.strokeRect(bx,by,bw,bh);
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font='900 40px "Baloo 2",cursive'; ctx.lineWidth=9; ctx.strokeStyle='#111';
+    ctx.strokeText(big,VIEW_W/2,by+64); ctx.fillStyle=color; ctx.fillText(big,VIEW_W/2,by+64);
+    ctx.font='800 15px Archivo,sans-serif'; ctx.lineWidth=5;
+    ctx.strokeText(sub,VIEW_W/2,by+98); ctx.fillStyle='#fff'; ctx.fillText(sub,VIEW_W/2,by+98);
+  }
+  function drawMinimap(){
+    /* Levels 2-3: whole track shrunk into a corner map so you can see
+       the bigger circuit and where the AI is. */
+    var mw=92, mh=Math.round(mw*cfg.worldH/cfg.worldW);
+    var mx=VIEW_W-mw-10, my=10;
+    ctx.fillStyle='rgba(255,255,255,0.88)'; ctx.strokeStyle='#111'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.roundRect(mx-4,my-4,mw+8,mh+8,8); ctx.fill(); ctx.stroke();
+    var sx=mw/cfg.worldW, sy=mh/cfg.worldH;
+    ctx.strokeStyle='#5D7A86'; ctx.lineWidth=3; ctx.lineJoin='round';
+    ctx.beginPath();
+    for(var i=0;i<N;i+=4){ var p=WP[i]; if(i===0) ctx.moveTo(mx+p.x*sx,my+p.y*sy); else ctx.lineTo(mx+p.x*sx,my+p.y*sy); }
+    ctx.closePath(); ctx.stroke();
+    ctx.fillStyle='#2979FF'; ctx.beginPath(); ctx.arc(mx+ai.x*sx,my+ai.y*sy,3.6,0,7); ctx.fill();
+    ctx.strokeStyle='#111'; ctx.lineWidth=1.2; ctx.stroke();
+    ctx.fillStyle='#FF6D00'; ctx.beginPath(); ctx.arc(mx+player.x*sx,my+player.y*sy,4.2,0,7); ctx.fill();
+    ctx.strokeStyle='#111'; ctx.stroke();
+  }
   function draw(){
-    /* grass */
-    ctx.fillStyle='#3E9B4F'; ctx.fillRect(0,0,W,H);
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+    /* ---- camera: one uniform scale for the whole world ---- */
+    var scale, vw=VIEW_W, vh=VIEW_H;
+    if(cfg.fit){ scale=Math.min(vw/cfg.worldW, vh/cfg.worldH); camX=cfg.worldW/2; camY=cfg.worldH/2; }
+    else {
+      scale=1;
+      var hw=vw/2, hh=vh/2;
+      camX+=(player.x-camX)*0.12; camY+=(player.y-camY)*0.12;
+      camX=Math.max(hw,Math.min(cfg.worldW-hw,camX));
+      camY=Math.max(hh,Math.min(cfg.worldH-hh,camY));
+    }
+    ctx.fillStyle='#3E9B4F'; ctx.fillRect(0,0,VIEW_W,VIEW_H);
+    ctx.save();
+    ctx.translate(vw/2,vh/2); ctx.scale(scale,scale); ctx.translate(-camX,-camY);
+    /* grass (covers the whole world) */
+    ctx.fillStyle='#3E9B4F'; ctx.fillRect(0,0,cfg.worldW,cfg.worldH);
     var tile=36;
-    for(var ty=0;ty<H/tile;ty++) for(var tx=0;tx<W/tile;tx++){ if((tx+ty)%2===0){ ctx.fillStyle='rgba(255,255,255,0.05)'; ctx.fillRect(tx*tile,ty*tile,tile,tile); } }
+    for(var ty=0;ty<cfg.worldH/tile;ty++) for(var tx=0;tx<cfg.worldW/tile;tx++){ if((tx+ty)%2===0){ ctx.fillStyle='rgba(255,255,255,0.05)'; ctx.fillRect(tx*tile,ty*tile,tile,tile); } }
     speckles.forEach(function(sp){ ctx.strokeStyle='rgba(20,70,25,'+sp.a+')'; ctx.lineWidth=1.3; ctx.beginPath(); ctx.moveTo(sp.x,sp.y); ctx.lineTo(sp.x+1.5,sp.y-sp.l); ctx.stroke(); });
-    /* grandstand with crowd, top center */
-    ctx.fillStyle='rgba(0,0,0,0.2)'; ctx.fillRect(105,9,150,36);
-    ctx.fillStyle='#78909C'; ctx.strokeStyle='#111'; ctx.lineWidth=2.4;
-    ctx.beginPath(); ctx.roundRect(103,5,150,36,5); ctx.fill(); ctx.stroke();
-    ctx.fillStyle='#FF7043'; ctx.fillRect(103,5,150,7);
-    crowd.forEach(function(p){ ctx.fillStyle=p.c; ctx.beginPath(); ctx.arc(p.x,p.y,2.4,0,7); ctx.fill(); });
-    /* infield tents */
-    drawTent(178,196,'#FF6D00'); drawTent(222,238,'#29B6F6');
+    if(level===1){
+      ctx.fillStyle='rgba(0,0,0,0.2)'; ctx.fillRect(105,9,150,36);
+      ctx.fillStyle='#78909C'; ctx.strokeStyle='#111'; ctx.lineWidth=2.4;
+      ctx.beginPath(); ctx.roundRect(103,5,150,36,5); ctx.fill(); ctx.stroke();
+      ctx.fillStyle='#FF7043'; ctx.fillRect(103,5,150,7);
+      crowd.forEach(function(p){ ctx.fillStyle=p.c; ctx.beginPath(); ctx.arc(p.x,p.y,2.4,0,7); ctx.fill(); });
+    }
+    tents.forEach(function(t){ drawTent(t.x,t.y,t.c); });
     trees.forEach(function(t){ drawTree(t.x,t.y); });
     bushes.forEach(function(b){ drawBush(b.x,b.y); });
     /* track shadow */
-    ctx.save(); ctx.translate(0,4); trackPath(0); ctx.strokeStyle='rgba(0,0,0,0.20)'; ctx.lineWidth=HALF*2+14; ctx.lineJoin='round'; ctx.stroke(); ctx.restore();
+    ctx.save(); ctx.translate(0,4); trackPath(); ctx.strokeStyle='rgba(0,0,0,0.20)'; ctx.lineWidth=HALF*2+14; ctx.lineJoin='round'; ctx.stroke(); ctx.restore();
     /* orange curb base */
-    trackPath(0); ctx.strokeStyle='#F4511E'; ctx.lineWidth=HALF*2+12; ctx.lineJoin='round'; ctx.stroke();
+    trackPath(); ctx.strokeStyle='#F4511E'; ctx.lineWidth=HALF*2+12; ctx.lineJoin='round'; ctx.stroke();
     /* white curb stripes (dashed over the orange) */
-    trackPath(0); ctx.strokeStyle='#FFFFFF'; ctx.lineWidth=HALF*2+12; ctx.setLineDash([15,15]); ctx.stroke(); ctx.setLineDash([]);
+    trackPath(); ctx.strokeStyle='#FFFFFF'; ctx.lineWidth=HALF*2+12; ctx.setLineDash([15,15]); ctx.stroke(); ctx.setLineDash([]);
     /* asphalt — light grey-blue, Kenney style */
-    trackPath(0); ctx.strokeStyle='#B7C9CE'; ctx.lineWidth=HALF*2; ctx.stroke();
-    trackPath(0); ctx.strokeStyle='rgba(255,255,255,0.20)'; ctx.lineWidth=HALF*2-14; ctx.stroke();
+    trackPath(); ctx.strokeStyle='#B7C9CE'; ctx.lineWidth=HALF*2; ctx.stroke();
+    trackPath(); ctx.strokeStyle='rgba(255,255,255,0.20)'; ctx.lineWidth=HALF*2-14; ctx.stroke();
     /* center dashes */
-    trackPath(0); ctx.strokeStyle='rgba(255,255,255,0.55)'; ctx.lineWidth=2.6; ctx.setLineDash([16,22]); ctx.stroke(); ctx.setLineDash([]);
-    /* PIT label on the right straight */
-    ctx.save(); ctx.translate(R+2,215); ctx.rotate(Math.PI/2);
-    ctx.fillStyle='rgba(255,255,255,0.65)'; ctx.font='800 13px Archivo,sans-serif'; ctx.textAlign='center'; ctx.fillText('P I T',0,5); ctx.restore();
-    /* start / finish checkers across the bottom straight */
-    var fx=180, sq=6.5;
-    for(var ry=0;ry<8;ry++) for(var rx=0;rx<2;rx++){
-      ctx.fillStyle=(rx+ry)%2===0?'#111111':'#FFFFFF';
-      ctx.fillRect(fx-6.5+rx*sq, B-HALF+ry*sq, sq, sq);
+    trackPath(); ctx.strokeStyle='rgba(255,255,255,0.55)'; ctx.lineWidth=2.6; ctx.setLineDash([16,22]); ctx.stroke(); ctx.setLineDash([]);
+    if(level===1){
+      ctx.save(); ctx.translate(276+2,215); ctx.rotate(Math.PI/2);
+      ctx.fillStyle='rgba(255,255,255,0.65)'; ctx.font='800 13px Archivo,sans-serif'; ctx.textAlign='center'; ctx.fillText('P I T',0,5); ctx.restore();
     }
-    ctx.strokeStyle='rgba(17,17,17,0.6)'; ctx.lineWidth=1.4; ctx.strokeRect(fx-6.5,B-HALF,13,HALF*2);
+    /* start / finish checkers across the track at waypoint 0 */
+    var sp0=WP[0], sd=dirAt(0), sq=6.5, rowsN=Math.floor(HALF*2/sq);
+    for(var ry=0;ry<rowsN;ry++) for(var rx=0;rx<2;rx++){
+      var along=-sq+rx*sq, off=-HALF+ry*sq;
+      var cxp=sp0.x+sd.x*along+(-sd.y)*off, cyp=sp0.y+sd.y*along+sd.x*off;
+      ctx.save(); ctx.translate(cxp,cyp); ctx.rotate(Math.atan2(sd.y,sd.x));
+      ctx.fillStyle=(rx+ry)%2===0?'#111111':'#FFFFFF'; ctx.fillRect(-sq/2,-sq/2,sq,sq);
+      ctx.restore();
+    }
     /* cars */
     drawCar(ai); drawCar(player);
-    /* countdown overlay */
+    ctx.restore();
+    /* ---- screen-space overlays ---- */
+    if(!cfg.fit) drawMinimap();
     if(state==='count'){
       var n=countT<50?'3':countT<100?'2':countT<150?'1':'GO!';
-      ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(0,0,W,H);
+      ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(0,0,VIEW_W,VIEW_H);
       ctx.font='900 74px "Baloo 2",cursive'; ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.lineWidth=10; ctx.strokeStyle='#111'; ctx.strokeText(n,W/2,H/2-10);
-      ctx.fillStyle= n==='GO!'?'#69F0AE':'#FFD400'; ctx.fillText(n,W/2,H/2-10);
-      ctx.font='800 17px Archivo,sans-serif'; ctx.lineWidth=5; ctx.strokeText('FIRST TO '+LAPS_TO_WIN+' LAPS WINS',W/2,H/2+42);
-      ctx.fillStyle='#FFFFFF'; ctx.fillText('FIRST TO '+LAPS_TO_WIN+' LAPS WINS',W/2,H/2+42);
+      ctx.lineWidth=10; ctx.strokeStyle='#111'; ctx.strokeText(n,VIEW_W/2,VIEW_H/2-16);
+      ctx.fillStyle= n==='GO!'?'#69F0AE':'#FFD400'; ctx.fillText(n,VIEW_W/2,VIEW_H/2-16);
+      ctx.font='800 17px Archivo,sans-serif'; ctx.lineWidth=5; ctx.strokeText('LEVEL '+level+' — FIRST TO '+LAPS_TO_WIN+' LAPS',VIEW_W/2,VIEW_H/2+36);
+      ctx.fillStyle='#FFFFFF'; ctx.fillText('LEVEL '+level+' — FIRST TO '+LAPS_TO_WIN+' LAPS',VIEW_W/2,VIEW_H/2+36);
+      if(level>1){ ctx.font='800 13px Archivo,sans-serif'; ctx.lineWidth=4; ctx.strokeText('BIGGER TRACK • FASTER CARS',VIEW_W/2,VIEW_H/2+60); ctx.fillStyle='#FFD400'; ctx.fillText('BIGGER TRACK • FASTER CARS',VIEW_W/2,VIEW_H/2+60); }
     }
-    /* flash message (Lap 2! / Final lap!) */
     if(flashT>0 && state==='go'){
       ctx.font='900 34px "Baloo 2",cursive'; ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.lineWidth=8; ctx.strokeStyle='#111'; ctx.strokeText(flashMsg,W/2,64);
-      ctx.fillStyle='#FFD400'; ctx.fillText(flashMsg,W/2,64);
+      ctx.lineWidth=8; ctx.strokeStyle='#111'; ctx.strokeText(flashMsg,VIEW_W/2,64);
+      ctx.fillStyle='#FFD400'; ctx.fillText(flashMsg,VIEW_W/2,64);
     }
-    /* finish overlay */
+    if(state==='clear'){
+      banner('LEVEL '+level+' CLEAR! 🏆', 'Level '+(level+1)+' next — bigger track, faster cars!', '#69F0AE');
+    }
+    if(state==='retry'){
+      banner('AI WINS LEVEL '+level, endByTime?'Time! The AI was ahead — retry Level '+level+'.':'Retry Level '+level+' — you\'ve got this!', '#FF8A65');
+    }
     if(state==='done'){
-      ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(0,0,W,H);
-      /* checker banner */
-      var bw=230,bh=26,bx=(W-bw)/2,by=118;
-      for(var cy2=0;cy2<2;cy2++) for(var cx2=0;cx2<18;cx2++){ ctx.fillStyle=(cx2+cy2)%2===0?'#111':'#fff'; ctx.fillRect(bx+cx2*(bw/18),by+cy2*(bh/2),bw/18,bh/2); }
-      ctx.strokeStyle='#111'; ctx.lineWidth=3; ctx.strokeRect(bx,by,bw,bh);
-      ctx.font='900 44px "Baloo 2",cursive'; ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.lineWidth=9; ctx.strokeStyle='#111';
-      var big=winner==='player'?'🏆 YOU WIN!':'AI WINS';
-      ctx.strokeText(big,W/2,by+62); ctx.fillStyle=winner==='player'?'#69F0AE':'#FF8A65'; ctx.fillText(big,W/2,by+62);
-      ctx.font='800 16px Archivo,sans-serif'; ctx.lineWidth=5;
-      var sub=endByTime?'Time! You were '+(winner==='player'?'ahead':'behind')+' when the clock ran out.':(winner==='player'?'You finished '+LAPS_TO_WIN+' laps first!':'The AI finished '+LAPS_TO_WIN+' laps first.');
-      ctx.strokeText(sub,W/2,by+94); ctx.fillStyle='#fff'; ctx.fillText(sub,W/2,by+94);
+      banner('🏆 CHAMPION!', endByTime?'Time! You were ahead on Level 3 — you beat all 3 levels!':'You beat all 3 levels — racing champion!', '#69F0AE');
     }
   }
   function updateProg(c){
@@ -970,22 +1105,34 @@ function mountRacing(){
     var delta=ni-c.idx;
     if(delta>N/2) delta-=N; else if(delta<-N/2) delta+=N;
     if(Math.abs(delta)<=10){ c.prog+=delta; c.idx=ni; }
-    var lap=Math.floor(c.prog/N)+1;
+    var lap=Math.floor((c.prog-c.base)/N)+1;
     c.lap=Math.max(1,Math.min(LAPS_TO_WIN,lap));
   }
+  function relProg(c){ return c.prog-c.base; }
   function finish(winnerId,byTime){
-    if(state==='done') return;
-    state='done'; winner=winnerId; endByTime=!!byTime;
+    if(state==='done'||state==='clear'||state==='retry') return;
+    endByTime=!!byTime;
     var m=$('rcMsg');
-    if(winnerId==='player'){ if(m) m.textContent='🏆 You win! Swipe up or pick Games for another race.'; pop(980); recordScore('Racing — YOU won the 3-lap race!'); setScore('🏆 You win!'); }
-    else { if(m) m.textContent='The AI won this one — swipe up or pick Games to race again.'; pop(180); recordScore('Racing — AI won the 3-lap race'); setScore('AI won'); }
+    if(winnerId==='player' && level<3){
+      state='clear'; transT=0; pop(980);
+      if(m) m.textContent='🏆 Level '+level+' cleared! Level '+(level+1)+' coming up…';
+      recordScore('Racing — cleared Level '+level+' of 3'); setScore('Level '+level+' cleared!');
+    } else if(winnerId==='player'){
+      state='done'; pop(980);
+      if(m) m.textContent='🏆 You beat all 3 levels! Swipe up or pick Games to race again.';
+      recordScore('Racing — beat ALL 3 levels! 🏆'); setScore('🏆 Racing champion!');
+    } else {
+      state='retry'; transT=0; pop(180);
+      if(m) m.textContent='The AI took Level '+level+' — retrying Level '+level+'…';
+      recordScore('Racing — AI won Level '+level); setScore('AI won Level '+level);
+    }
   }
   function stepCar(c,steer,gasOn,brakeOn,maxSp){
     var onTrack=distToTrack(c.x,c.y)<=HALF+4;
     var cap=onTrack?maxSp:maxSp*0.48;
-    if(gasOn) c.sp+=0.09;
+    if(gasOn) c.sp+=maxSp*0.048;
     else c.sp*=0.985;
-    if(brakeOn) c.sp-=0.18;
+    if(brakeOn) c.sp-=maxSp*0.10;
     if(!onTrack) c.sp*=0.965;
     if(c.sp>cap) c.sp=Math.max(cap,c.sp*0.94);
     if(c.sp<0) c.sp=0;
@@ -995,71 +1142,86 @@ function mountRacing(){
     c.steerVis=steer;
     c.x+=Math.cos(c.a)*c.sp;
     c.y+=Math.sin(c.a)*c.sp;
-    c.x=Math.max(16,Math.min(W-16,c.x));
-    c.y=Math.max(16,Math.min(H-16,c.y));
+    c.x=Math.max(16,Math.min(cfg.worldW-16,c.x));
+    c.y=Math.max(16,Math.min(cfg.worldH-16,c.y));
   }
   function step(){
+    if(!player||!ai){ draw(); return; }
     if(state==='count'){
       countT++;
       if(countT===150){ pop(900); var m0=$('rcMsg'); if(m0) m0.textContent='GO! Hold GAS and steer with ◀ ▶'; }
       if(countT>175){ state='go'; }
       draw(); return;
     }
-    if(state==='go'){
-      raceFrames++;
-      /* player */
-      var steer=(keys.left?-1:0)+(keys.right?1:0);
-      stepCar(player,steer,keys.gas,keys.brake,1.85);
-      updateProg(player);
-      /* AI: chase a waypoint ahead, slow for corners, gentle rubber-band */
-      var look=8+Math.floor(ai.sp*2.2);
-      var tp=WP[(ai.idx+look)%N];
-      var desired=Math.atan2(tp.y-ai.y,tp.x-ai.x);
-      var diff=desired-ai.a;
-      while(diff>Math.PI) diff-=Math.PI*2;
-      while(diff<-Math.PI) diff+=Math.PI*2;
-      var aiSteer=Math.max(-1,Math.min(1,diff*2.4));
-      var gap=player.prog-ai.prog;
-      var aiMax=1.34+(gap>55?0.10:gap<-55?-0.06:0);
-      var aiGas=Math.abs(diff)<1.15;
-      if(Math.abs(diff)>0.55) aiMax*=0.70;
-      stepCar(ai,aiSteer,aiGas,false,aiMax);
-      updateProg(ai);
-      /* car-to-car bump */
-      var dx=player.x-ai.x, dy=player.y-ai.y, dd=Math.hypot(dx,dy);
-      if(dd>0.01 && dd<24){
-        var push=(24-dd)/2, ux=dx/dd, uy=dy/dd;
-        player.x+=ux*push; player.y+=uy*push;
-        ai.x-=ux*push; ai.y-=uy*push;
-        player.sp*=0.96; ai.sp*=0.96;
-      }
-      /* lap flash for the player */
-      if(player.lap>lastPlayerLap){
-        lastPlayerLap=player.lap;
-        flashMsg=player.lap>=LAPS_TO_WIN?'FINAL LAP!':'LAP '+player.lap+'!';
-        flashT=80; pop(820);
-        var mm=$('rcMsg'); if(mm) mm.textContent=player.lap>=LAPS_TO_WIN?'Final lap — bring it home!':'Lap '+player.lap+' of '+LAPS_TO_WIN+' — keep going!';
-      }
-      if(flashT>0) flashT--;
-      /* HUD */
-      var el=$('rcLap'); if(el) el.textContent=player.lap;
-      var ea=$('rcAiLap'); if(ea) ea.textContent=ai.lap;
-      var ep=$('rcPos'); if(ep) ep.textContent=player.prog>=ai.prog?'1st':'2nd';
-      setScore('Lap '+player.lap+'/'+LAPS_TO_WIN+' • '+(player.prog>=ai.prog?'1st':'2nd'));
-      /* win check */
-      if(player.prog>=N*LAPS_TO_WIN) finish('player',false);
-      else if(ai.prog>=N*LAPS_TO_WIN) finish('ai',false);
-    } else if(state==='done'){
+    if(state==='clear'||state==='retry'){
+      transT++;
       player.sp*=0.94; ai.sp*=0.94;
       player.x+=Math.cos(player.a)*player.sp; player.y+=Math.sin(player.a)*player.sp;
       ai.x+=Math.cos(ai.a)*ai.sp; ai.y+=Math.sin(ai.a)*ai.sp;
+      draw();
+      if(transT>165){
+        if(state==='clear') startLevel(level+1);
+        else startLevel(level);
+      }
+      return;
     }
+    if(state==='done'){
+      player.sp*=0.94; ai.sp*=0.94;
+      player.x+=Math.cos(player.a)*player.sp; player.y+=Math.sin(player.a)*player.sp;
+      ai.x+=Math.cos(ai.a)*ai.sp; ai.y+=Math.sin(ai.a)*ai.sp;
+      draw(); return;
+    }
+    /* state === 'go' */
+    raceFrames++;
+    var steer=(keys.left?-1:0)+(keys.right?1:0);
+    stepCar(player,steer,keys.gas,keys.brake,cfg.playerMax);
+    updateProg(player);
+    /* AI: chase a waypoint ahead, slow for corners, gentle rubber-band */
+    var look=8+Math.floor(ai.sp*2.2);
+    var tp=WP[(ai.idx+look)%N];
+    var desired=Math.atan2(tp.y-ai.y,tp.x-ai.x);
+    var diff=desired-ai.a;
+    while(diff>Math.PI) diff-=Math.PI*2;
+    while(diff<-Math.PI) diff+=Math.PI*2;
+    var aiSteer=Math.max(-1,Math.min(1,diff*cfg.aiSteer));
+    var gap=relProg(player)-relProg(ai);
+    var aiMax=cfg.aiMax+(gap>cfg.aiBand?cfg.aiBandUp:gap<-cfg.aiBand?-cfg.aiBandDown:0);
+    var aiGas=Math.abs(diff)<1.15;
+    if(Math.abs(diff)>cfg.aiCornerCut) aiMax*=cfg.aiCornerSlow;
+    stepCar(ai,aiSteer,aiGas,false,aiMax);
+    updateProg(ai);
+    /* car-to-car bump */
+    var dx=player.x-ai.x, dy=player.y-ai.y, dd=Math.hypot(dx,dy);
+    if(dd>0.01 && dd<24){
+      var push=(24-dd)/2, ux=dx/dd, uy=dy/dd;
+      player.x+=ux*push; player.y+=uy*push;
+      ai.x-=ux*push; ai.y-=uy*push;
+      player.sp*=0.96; ai.sp*=0.96;
+    }
+    /* lap flash for the player */
+    if(player.lap>lastPlayerLap){
+      lastPlayerLap=player.lap;
+      flashMsg=player.lap>=LAPS_TO_WIN?'FINAL LAP!':'LAP '+player.lap+'!';
+      flashT=80; pop(820);
+      var mm=$('rcMsg'); if(mm) mm.textContent=player.lap>=LAPS_TO_WIN?'Final lap of Level '+level+' — bring it home!':'Level '+level+' • Lap '+player.lap+' of '+LAPS_TO_WIN+' — keep going!';
+    }
+    if(flashT>0) flashT--;
+    /* HUD */
+    var el=$('rcLap'); if(el) el.textContent=player.lap;
+    var ea=$('rcAiLap'); if(ea) ea.textContent=ai.lap;
+    var ep=$('rcPos'); if(ep) ep.textContent=relProg(player)>=relProg(ai)?'1st':'2nd';
+    setScore('Level '+level+' • Lap '+player.lap+'/'+LAPS_TO_WIN+' • '+(relProg(player)>=relProg(ai)?'1st':'2nd'));
+    /* win check */
+    if(relProg(player)>=N*LAPS_TO_WIN) finish('player',false);
+    else if(relProg(ai)>=N*LAPS_TO_WIN) finish('ai',false);
     draw();
   }
-  /* If the 60-second roulette clock runs out mid-race, whoever is ahead wins */
-  later(function(){ if(state!=='done') finish(player.prog>=ai.prog?'player':'ai', true); }, 57200);
-  setScore('Lap 1/'+LAPS_TO_WIN);
-  draw();
+  /* If the 60-second roulette clock runs out mid-level, whoever is ahead
+     on progress wins that level. */
+  later(function(){ if(state==='go'||state==='count') finish(relProg(player)>=relProg(ai)?'player':'ai', true); }, 57200);
+  startLevel(1);
+  fitCanvas();
+  later(fitCanvas,60); later(fitCanvas,300);
   every(step,16);
 }
 
