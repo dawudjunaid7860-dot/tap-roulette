@@ -322,7 +322,7 @@ var GAMES=[
  {id:'memmatch',name:'Memory Match',color:'#5E35B1',icon:'🃏',how:'Flip two cards at a time and find all 8 matching animal pairs. Remember where they are!'},
  {id:'tictac',name:'Tic Tac Toe',color:'#A9716B',icon:'✖️',how:'You are the red X, the computer is the blue O. Tap a square to play — get 3 in a row to win!'},
  {id:'racing',name:'Racing Rush',color:'#FF6D00',icon:'🏎️',how:'Race the blue AI car over 3 levels — first to finish 3 laps wins the level! Each level gets its own 1:30 on the clock: if time runs out, whoever is ahead on laps and progress wins that level. Win and the next level unlocks: bigger track, faster cars (yours AND the AI\'s), tougher AI. Lose and you retry the same level. Hold GAS to speed up, steer with the ◀ ▶ buttons, BRAKE for tight corners. Grass slows you down, so stay on the track!'},
- {id:'pirate',name:'Pirate Battle',color:'#00897B',icon:'🏴‍☠️',how:'Sail your blue-sailed ship around the islands and blast the enemy pirate ships with your cannons! Your ship sails on its own — steer with the ◀ ▶ buttons and tap FIRE to shoot cannonballs from both sides of your ship. Enemy ships (grey skull sails and red sails) sail around and shoot back at you. Every ship has health: sink ALL the enemy ships before the 1:30 timer runs out to win — but if they sink you first, you lose!'},
+ {id:'pirate',name:'Pirate Battle',color:'#00897B',icon:'🏴‍☠️',how:'Sail your blue-sailed ship around the islands and blast the enemy pirate ships with your cannons! Your ship sails on its own — steer with the ◀ ▶ buttons to point at an enemy, then hold FIRE to shoot cannonballs straight ahead, the way your ship is facing. Enemy ships (grey skull sails and red sails) sail around and shoot back slowly. Every ship has health: sink ALL the enemy ships before the 1:30 timer runs out to win — but if they sink you first, you lose!'},
  {id:'spotmatch',name:'Spot the Match',color:'#29B6F6',icon:'🔍',how:'Two round cards full of symbols — exactly ONE symbol is on both cards. Find it and tap it, fast!'},
  {id:'spotdiff',name:'Spot the Difference',color:'#FF7043',icon:'🔎',how:'Two pictures side by side that look almost the same — but 5 things are different! Tap each difference you find, on either picture. Find all 5 to move to the next scene. 90 seconds.'}
 ];
@@ -1352,13 +1352,16 @@ function mountPirate(){
   function makeShip(x,y,a,sail,hp,speed){
     return {x:x,y:y,a:a,hp:hp,maxHp:hp,sail:sail,speed:speed,fireCd:60+Math.random()*80,flashT:0,sinkT:0,dead:false,wob:Math.random()*7};
   }
-  var player=makeShip(180,448,-Math.PI/2,'blue',5,1.55);
+  var player=makeShip(180,448,-Math.PI/2,'blue',7,1.55);
   var enemies=[
-    makeShip(96,150,0.7,'grey',3,0.92),
-    makeShip(268,148,-2.2,'red',3,0.98),
-    makeShip(272,322,2.6,'grey',3,0.88),
-    makeShip(84,318,-0.5,'red',3,1.02)
+    makeShip(96,150,0.7,'grey',2,0.92),
+    makeShip(268,148,-2.2,'red',2,0.98),
+    makeShip(272,322,2.6,'grey',2,0.88),
+    makeShip(84,318,-0.5,'red',2,1.02)
   ];
+  /* Grace period: no enemy fires for the first ~5 seconds, staggered so
+     they don't all start shooting at once. */
+  enemies.forEach(function(en,i){ en.fireCd=300+i*75+Math.random()*90; });
   var balls=[], parts=[];
   var keys={left:false,right:false,fire:false};
   var fireCd=0, frame=0, kills=0, state='go';
@@ -1426,21 +1429,22 @@ function mountPirate(){
     }
   }
   function fireBroadside(sh,from){
-    var px=Math.cos(sh.a+Math.PI/2), py=Math.sin(sh.a+Math.PI/2);
-    [-1,1].forEach(function(side){
-      balls.push({x:sh.x+px*side*15, y:sh.y+py*side*15,
-        vx:px*side*4.7+Math.cos(sh.a)*0.7, vy:py*side*4.7+Math.sin(sh.a)*0.7,
-        from:from, trail:[], life:95});
+    /* Player cannons fire FORWARD — the way the ship is facing — as a pair
+       with a small spread, so steering at an enemy and holding FIRE connects.
+       Fast balls (6.4/frame) with a long life reach across the arena. */
+    [-0.09,0.09].forEach(function(off){
+      var a=sh.a+off;
+      balls.push({x:sh.x+Math.cos(a)*18, y:sh.y+Math.sin(a)*18,
+        vx:Math.cos(a)*6.4, vy:Math.sin(a)*6.4,
+        from:from, trail:[], life:100});
     });
-    burst(sh.x+px*13,sh.y+py*13,['#FFFFFF','#CFD8DC'],3,0.8);
-    burst(sh.x-px*13,sh.y-py*13,['#FFFFFF','#CFD8DC'],3,0.8);
+    burst(sh.x+Math.cos(sh.a)*20,sh.y+Math.sin(sh.a)*20,['#FFFFFF','#CFD8DC'],4,0.9);
   }
   function fireAimed(sh,target,from){
-    var dx=target.x-sh.x, dy=target.y-sh.y, d=Math.hypot(dx,dy)||1;
-    var lead=from==='enemy'?0.55:0;
-    var tx=target.x+Math.cos(target.a)*target.speed*lead*d/3.6, ty=target.y+Math.sin(target.a)*target.speed*lead*d/3.6;
-    var a2=Math.atan2(ty-sh.y,tx-sh.x);
-    balls.push({x:sh.x+Math.cos(a2)*16, y:sh.y+Math.sin(a2)*16, vx:Math.cos(a2)*3.6, vy:Math.sin(a2)*3.6, from:from, trail:[], life:110});
+    /* Enemy shots are deliberately weak: no lead prediction, a wide random
+       aim error, and slow balls the player can sail away from. */
+    var a2=Math.atan2(target.y-sh.y,target.x-sh.x)+(Math.random()-0.5)*0.7;
+    balls.push({x:sh.x+Math.cos(a2)*16, y:sh.y+Math.sin(a2)*16, vx:Math.cos(a2)*2.7, vy:Math.sin(a2)*2.7, from:from, trail:[], life:85});
   }
   function hearts(n){ var t=''; for(var i=0;i<player.maxHp;i++) t+= i<n?'♥':'♡'; return t; }
   function updHud(){
@@ -1455,7 +1459,7 @@ function mountPirate(){
     var m=$('pbMsg');
     if(won){
       if(m) m.textContent='🏆 You sunk the whole pirate fleet!';
-      setScore('🏆 Fleet sunk!'); recordScore('Pirate Battle — sunk all 4 ships, hull '+Math.max(0,player.hp)+'/5');
+      setScore('🏆 Fleet sunk!'); recordScore('Pirate Battle — sunk all 4 ships, hull '+Math.max(0,player.hp)+'/'+player.maxHp);
       pop(980);
     } else {
       if(m) m.textContent='💥 Your ship was sunk! Swipe up to try another game.';
@@ -1505,7 +1509,7 @@ function mountPirate(){
       if(player.sinkT===0) stepShip(player,steer,player.speed);
       if(fireCd>0) fireCd--;
       if(keys.fire && fireCd<=0 && player.sinkT===0 && player.hp>0){
-        fireBroadside(player,'player'); fireCd=24; pop(300);
+        fireBroadside(player,'player'); fireCd=14; pop(300);
       }
       /* enemies: hunt the player, keep broadside range, shoot back */
       enemies.forEach(function(en){
@@ -1519,8 +1523,8 @@ function mountPirate(){
         var diff=((want-en.a)%(Math.PI*2)+Math.PI*3)%(Math.PI*2)-Math.PI;
         stepShip(en,Math.max(-0.038,Math.min(0.038,diff)),en.speed);
         if(en.fireCd>0) en.fireCd--;
-        if(en.fireCd<=0 && dist<245 && player.hp>0 && player.sinkT===0){
-          fireAimed(en,player,'enemy'); en.fireCd=115+Math.random()*70; pop(240);
+        if(en.fireCd<=0 && dist<210 && player.hp>0 && player.sinkT===0){
+          fireAimed(en,player,'enemy'); en.fireCd=480+Math.random()*240; pop(240);
         }
         if(en.hp===1 && frame%9===0) parts.push({x:en.x+(Math.random()*10-5),y:en.y-8,vx:0.2,vy:-0.7,life:30,max:30,c:'rgba(90,90,90,0.55)',r:3.4});
       });
@@ -1537,8 +1541,8 @@ function mountPirate(){
       }
       if(!gone && state==='go'){
         if(b.from==='player'){
-          for(var ei=0;ei<enemies.length;ei++){ var en2=enemies[ei]; if(!en2.dead&&en2.sinkT===0&&Math.hypot(b.x-en2.x,b.y-en2.y)<21){ hitShip(en2,b); gone=true; break; } }
-        } else if(player.sinkT===0 && player.hp>0 && Math.hypot(b.x-player.x,b.y-player.y)<21){
+          for(var ei=0;ei<enemies.length;ei++){ var en2=enemies[ei]; if(!en2.dead&&en2.sinkT===0&&Math.hypot(b.x-en2.x,b.y-en2.y)<30){ hitShip(en2,b); gone=true; break; } }
+        } else if(player.sinkT===0 && player.hp>0 && Math.hypot(b.x-player.x,b.y-player.y)<17){
           hitShip(player,b); gone=true;
         }
       }
