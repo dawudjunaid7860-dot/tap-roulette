@@ -344,14 +344,13 @@ function clearFx(){timers.forEach(clearTimeout); intervals.forEach(clearInterval
 function later(fn,ms){var t=setTimeout(fn,ms); timers.push(t); return t;}
 function every(fn,ms){var i=setInterval(fn,ms); intervals.push(i); return i;}
 /* ============ SOUND — everything synthesized with Web Audio, no audio files ============ */
-var soundOn=true, sfxGain=null, musGain=null, noiseBuf=null, lastNoiseT=0;
+var soundOn=true, sfxGain=null, noiseBuf=null, lastNoiseT=0;
 var engOsc=null, engGain=null, engFilter=null;
 function ensureAudio(){
   try{
     if(!audioCtx){
       audioCtx=new (window.AudioContext||window.webkitAudioContext)();
       sfxGain=audioCtx.createGain(); sfxGain.gain.value=0.9; sfxGain.connect(audioCtx.destination);
-      musGain=audioCtx.createGain(); musGain.gain.value=0.45; musGain.connect(audioCtx.destination);
       var len=Math.floor(audioCtx.sampleRate*0.5), buf=audioCtx.createBuffer(1,len,audioCtx.sampleRate), d=buf.getChannelData(0);
       for(var i=0;i<len;i++) d[i]=Math.random()*2-1;
       noiseBuf=buf;
@@ -418,44 +417,13 @@ function engineStop(){
   try{ var o=engOsc, g=engGain; if(g) g.gain.setTargetAtTime(0.0,audioCtx.currentTime,0.05); setTimeout(function(){ try{o.stop();}catch(e){} },240); }catch(e){}
   engOsc=null; engGain=null; engFilter=null;
 }
-/* Background music — a quiet cheerful loop in C major, starts on first tap */
-var musTimer=null, musStep=0, musNext=0;
-var MUS_MEL=[76,79,84,79, 81,79,76,74, 72,76,79,76, 74,71,72,0, 76,79,84,79, 81,84,86,84, 79,76,74,71, 72,0,67,0];
-var MUS_ROOT=[48,53,55,48];
-function midiHz(m){ return 440*Math.pow(2,(m-69)/12); }
-function musNote(m,t0,dur,type,vol){
-  try{
-    var o=audioCtx.createOscillator(), g=audioCtx.createGain();
-    o.type=type; o.frequency.value=midiHz(m);
-    g.gain.setValueAtTime(0,t0); g.gain.linearRampToValueAtTime(vol,t0+0.02);
-    g.gain.exponentialRampToValueAtTime(0.001,t0+dur);
-    o.connect(g); g.connect(musGain); o.start(t0); o.stop(t0+dur+0.03);
-  }catch(e){}
-}
-function scheduleMusic(){
-  if(!audioCtx||!soundOn) return;
-  var SPB=60/116/2;
-  while(musNext<audioCtx.currentTime+0.35){
-    var st=musStep, mel=MUS_MEL[st];
-    if(mel) musNote(mel,musNext,0.24,'triangle',0.15);
-    if(st%8===0) musNote(MUS_ROOT[Math.floor(st/8)],musNext,0.95,'sine',0.17);
-    if(st%8===4) musNote(MUS_ROOT[Math.floor(st/8)]+7,musNext,0.5,'sine',0.10);
-    musStep=(musStep+1)%32; musNext+=SPB;
-  }
-}
-function startMusic(){
-  if(musTimer||!soundOn||!ensureAudio()) return;
-  musNext=audioCtx.currentTime+0.08; musStep=0;
-  musTimer=setInterval(scheduleMusic,110);
-}
-function stopMusic(){ if(musTimer){ clearInterval(musTimer); musTimer=null; } }
-document.addEventListener('pointerdown',function(){ ensureAudio(); if(soundOn) startMusic(); },{passive:true});
+document.addEventListener('pointerdown',function(){ ensureAudio(); },{passive:true});
 (function(){
   var b=$('soundBtn'); if(!b) return;
   b.addEventListener('click',function(){
     soundOn=!soundOn; b.textContent=soundOn?'🔊':'🔇';
-    if(soundOn){ if(sfxGain) sfxGain.gain.value=0.9; ensureAudio(); startMusic(); pop(700); }
-    else { stopMusic(); engineStop(); if(sfxGain) sfxGain.gain.value=0; }
+    if(soundOn){ if(sfxGain) sfxGain.gain.value=0.9; ensureAudio(); pop(700); }
+    else { engineStop(); if(sfxGain) sfxGain.gain.value=0; }
   });
 })();
 /* ============ KENNEY SPRITES — real CC0 art from kenney.nl (Pirate Pack + Racing Pack) ============ */
